@@ -40,7 +40,7 @@ Start the script in the command prompt with
 
 # Set working directory (i.e. where the files are located)
 # this is not a good way of doing it
-os.chdir(r"/Users/shubhamchoudhari/Documents/Work/Spring24")
+# os.chdir(r"/Users/shubhamchoudhari/Documents/Work/Spring24")
 
 
 # How many groups to generate
@@ -63,7 +63,8 @@ MAX_PROBLEM_GROUP_RESHUFFLE = 10000
 
 # Input file name
 # FILENAME = "Participants-MSC-Autumn-22.xls"
-FILENAME = "Masters_Fullweek_Jan24.xlsx"
+# FILENAME = "Masters_Fullweek_Jan24.xlsx"
+FILENAME="testdata.xlsx"
 # Prefix of output file. Example: OUT_PREFIX = "M" will result in group files called M01.xlsx, M02.xlsx...
 # OUT_PREFIX = "M"
 OUT_PREFIX = "M"
@@ -242,22 +243,6 @@ def generateGroups(sList, n=N_GROUPS):
     random.shuffle(sList)
     # this potentially assigns students to multiple groups
     # need to be done in a more failsafe way
-    """
-    Fix:
-        # Check if the list has enough items to create n groups
-    if len(sList) < n:
-        raise ValueError("The list must have at least n items to create n groups.")
-    
-    # Shuffle the list
-    random.shuffle(sList)
-    
-    # Create empty groups
-    groups = [[] for _ in range(n)]
-    
-    # Distribute items into groups
-    for index, item in enumerate(sList):
-        groups[index % n].append(item)
-    """
     groups = [sList[i::n] for i in range(n)]
     return groups
 
@@ -313,8 +298,8 @@ if __name__ == "__main__":
     for i in range(len(results)):
         print("Group", i + 1, "-", diversityScore(results[i]))
         tot += diversityScore(results[i])
-        createGroupFile(results[i], inputFile, i + 1)
-
+        # createGroupFile(results[i], inputFile, i + 1)
+    pd.DataFrame(results).transpose().to_excel("output.xlsx")
     print("Average similarity score: ", tot / len(results))
     highestScoring = max(results, key=lambda g: diversityScore(g))
     print("Max similarity score:", diversityScore(highestScoring))
