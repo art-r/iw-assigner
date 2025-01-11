@@ -16,3 +16,17 @@ You need: `pandas`, `numpy` and `openpyxl`
 
 - The results will be placed in the directory `groups`
 
+## General approach to the group assignment
+- Randomly create group distributions for a specified amount of time
+while using multiprocessing and therefore making use of the available device performance as much as possible
+- Keep track of the randomly created group with the best diversity score
+- After the specified amount of time has passed, use a greedy algorithm to make some
+random swaps in the group with the best diversity to see if the score can be improved => this will then be the result
+
+
+## Background for the solution
+The problem of creating the most diverse groups is similar to the set packing problem, which is an NP-complete problem (https://en.wikipedia.org/wiki/Set_packing). Therefore, it is safe to assume that there is no efficient algorithm that can achieve the best solution for creating the most diverse groups.
+
+The best approach is to create randomly assigned groups for as long as feasible and then try to improve iteratively on the best found group. Note that the longer the script is allowed to run, the better the diversity score may get. Since we are working with randomness, this means only the probability of getting more diverse groups increases. The script is therefore all about trying to increase this probability while staying within a still feasible time frame. We cannot wait an unreasonably long time for the script to finish, even though this would most likely come pretty close to finding the ideal distribution that has the maximum diversity.
+
+
