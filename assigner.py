@@ -40,7 +40,7 @@ Start the script in the command prompt with
 
 # Set working directory (i.e. where the files are located)
 # this is not a good way of doing it
-# os.chdir(r"/Users/shubhamchoudhari/Documents/Work/Spring24")
+# os.chdir(r"")
 
 
 # How many groups to generate
