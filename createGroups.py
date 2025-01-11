@@ -40,7 +40,7 @@ except ImportError as exc:
     raise exc
 
 ###########################################
-# ADJUST THESE PARAMETERS (or provide them while calling the script)
+# ADJUST THESE PARAMETERS
 # INPUT FILE PATH (absolute or relative path!)
 FILE = "testing/testdata.xlsx"
 
@@ -75,6 +75,7 @@ CONFIG = {
 
 # How long the script should try to create random groups (in minutes)
 RUNTIME = 0.1  # Minutes
+# END OF ADJUSTING
 ###########################################
 
 
@@ -386,7 +387,7 @@ def main(
     # to try to swap around students until the diversity score
     # try 10.000 different swaps
     groups = best_group_split
-    for _ in progressbar(range(10)):
+    for _ in progressbar(range(10000)):
         groups = greedy_assign(groups)
         score = np.mean([diversity_score(g) for g in groups])
         if score > best_score:
