@@ -330,7 +330,7 @@ def main(
     # 3. email duplicates
     check_duplicates(df, "All student info (exact duplicates)", dp_quit)
     check_duplicates(df[config["name_col"]], "Student name", dp_quit)
-    # check_duplicates(df[config["email_col"]], "Email", dp_quit)
+    check_duplicates(df[config["email_col"]], "Email", dp_quit)
 
     # print some stats
     print("#" * 20)
