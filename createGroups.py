@@ -332,7 +332,7 @@ def main(
     # 3. email duplicates
     check_duplicates(df, "All student info (exact duplicates)", dp_quit)
     check_duplicates(df[config["sn_col"]], "Student number", dp_quit)
-    # check_duplicates(df[config["email_col"]], "Email", dp_quit)
+    check_duplicates(df[config["email_col"]], "Email", dp_quit)
 
     # print some stats
     print("#" * 20)
@@ -389,7 +389,7 @@ def main(
     # to try to swap around students until the diversity score
     # try 100 different swaps
     groups = best_group_split
-    for _ in progressbar(range(1)):
+    for _ in progressbar(range(100)):
         groups = greedy_assign(groups)
         score = np.mean([diversity_score(g) for g in groups])
         if score > best_score:
