@@ -66,7 +66,9 @@ DUPLICATE_QUIT = True
 # in the column called "name". If you have a different name for this
 # column then change "name" to the respective name
 CONFIG = {
-    "name_col": "Name",
+    "fname_col": "First Name",
+    "lname_col": "Last Name",
+    "sn_col": "Student number",
     "email_col": "email",
     "studyline": "Study programme",
     "gender": "To which Gender do you identify the most?",
@@ -326,11 +328,11 @@ def main(
     # flag potential duplicates
     # checking for:
     # 1. exact duplicates
-    # 2. name duplicates
+    # 2. student number duplicates
     # 3. email duplicates
     check_duplicates(df, "All student info (exact duplicates)", dp_quit)
-    check_duplicates(df[config["name_col"]], "Student name", dp_quit)
-    check_duplicates(df[config["email_col"]], "Email", dp_quit)
+    check_duplicates(df[config["sn_col"]], "Student number", dp_quit)
+    # check_duplicates(df[config["email_col"]], "Email", dp_quit)
 
     # print some stats
     print("#" * 20)
@@ -385,9 +387,9 @@ def main(
     print("Running greedy swapping search to try to improve")
     # now take the group w the best diversity score and apply greedy algorithm
     # to try to swap around students until the diversity score
-    # try 10.000 different swaps
+    # try 100 different swaps
     groups = best_group_split
-    for _ in progressbar(range(10000)):
+    for _ in progressbar(range(1)):
         groups = greedy_assign(groups)
         score = np.mean([diversity_score(g) for g in groups])
         if score > best_score:
@@ -397,15 +399,14 @@ def main(
     print("#" * 20)
     print(f"==> Best diversity score is now: {best_score} (the closer to 0 the better)")
     print("#" * 20)
-    # write the result
-    out_path = os.path.join(output_dir, f"{o_prefix}_all_groups.xlsx")
     # the overview
-    pd.DataFrame(
-        best_group_split, index=[f"{o_prefix}{i}" for i in range(1, n_groups + 1)]
-    ).to_excel(out_path)
+    # pd.DataFrame(
+    #     best_group_split, index=[f"{o_prefix}{i}" for i in range(1, n_groups + 1)]
+    # ).to_excel(out_path)
 
     # save also per group (one folder per group)
     # folder (should contain all info)
+    all_data = pd.DataFrame(columns=["Buddy Group", config["fname_col"], config["lname_col"], config["sn_col"]])
     for i, g in enumerate(best_group_split):
         dir_path = os.path.join(output_dir, f"{o_prefix}{i+1}")
         if not os.path.isdir(dir_path):
@@ -415,10 +416,18 @@ def main(
             values.append(student.get_orig_data(df).values)
         groupdf = pd.DataFrame(values, columns=df.columns)
         # drop the original index
-        groupdf = groupdf.drop("Unnamed: 0", axis=1)
+        groupdf = groupdf.drop("Unnamed: 0", axis=1, errors="ignore")
         groupdf.reset_index(drop=True, inplace=True)
         out_path = os.path.join(dir_path, f"{o_prefix}{i+1}.xlsx")
         groupdf.to_excel(out_path)
+        # add to the overall dataframe
+        groupdf["Buddy Group"] = f"{o_prefix}{i+1}"
+        all_data = pd.concat([all_data, groupdf[["Buddy Group", config["fname_col"], config["lname_col"], config["sn_col"], config["gender"], config["studyline"], config["country"]]]])
+        all_data.reset_index(drop=True, inplace=True)
+    
+# write the result
+    out_path = os.path.join(output_dir, f"{o_prefix}_all_groups.xlsx")
+    all_data.to_excel(out_path)
 
 
 if __name__ == "__main__":
