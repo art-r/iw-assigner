@@ -29,7 +29,10 @@ import time
 
 from concurrent.futures import ProcessPoolExecutor
 
-# safe import
+# do a safe import
+# the reason for doing this is that for example openpyxl will otherwise
+# only be checked for once it is needed, which is at the end of the script
+# we however want to check if it is existent at the start to save time
 try:
     import openpyxl  # not directly needed but needed by pandas so check if installed at start
     import pandas as pd
