@@ -4,9 +4,21 @@ This repository holds the code for assigning people to groups for IntroWeek.
 
 The goal is to create groups that are as diverse as possible, accounting for gender, studyline, and home country.
 
+Depending on what you want to do this is the code file that you need:
+
+| Goal | Needed file |
+|---|---|
+| Initial assignment of all students to diverse groups | `createGroups.py` |
+| Assignment of students that signed up after deadline | `assignRest.py` |
+
+> note that `assignRest.py` will only assign random buddy group numbers but not add them to any existing files that were generaterd by `createGroups.py`, since it is assumed 
+> that these files might already have been distributed or sent away etc.
+
 ## How to run this
 - Install all dependencies (using the package manager of your choice)\
 You need: `pandas`, `numpy` and `openpyxl`
+
+> If you have no idea what this means then make sure to follow this for Windows: https://www.geeksforgeeks.org/how-to-install-pip-on-windows/
 
 - Locate the file that contains all the information about the signed up people (**DO NOT UPLOAD IT HERE**)
 
