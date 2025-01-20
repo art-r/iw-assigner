@@ -10,7 +10,7 @@ Depending on what you want to do this is the code file that you need:
 |---|---|
 | Initial assignment of all students to diverse groups | `createGroups.py` |
 | Assignment of students that signed up after deadline | `assignRest.py` |
-| Generate unique ticket tokens for all students | `tickets\createTicketTokens.py` |
+| Generate unique ticket tokens for all students | `tickets/createTicketTokens.py` |
 
 > note that `assignRest.py` will only assign random buddy group numbers but not add them to any existing files that were generaterd by `createGroups.py`, since it is assumed 
 > that these files might already have been distributed or sent away etc.
