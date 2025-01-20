@@ -5,11 +5,10 @@ that have such a token (not implemented here; needs to be implemented in the res
 system that handles the ticket purchases)
 
 All that this script does is:
-- read in existing tokens (to ensure no duplicate tokens are generated)
-- create secure and non-guessable tokens for every specified student that 
-does not have a token yet
+- create secure and non-guessable and unique token for every student
 
-Students are identified by student number (and for ease of use also by name)
+Students are identified by student number
+For ease of use the output will also contain their first and last name
 """
 
 import os
