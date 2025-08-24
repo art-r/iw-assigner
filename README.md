@@ -1,5 +1,7 @@
 # IW Assigner
 
+> Important Notice (24/08/25): There seems to be an issue with retrieving the original student info in the final step, so **the student number might not be correct in the output excel files!** The other info appears to be fine 
+
 This repository holds the code for assigning people to groups for IntroWeek.
 
 The goal is to create groups that are as diverse as possible, accounting for gender, studyline, and home country.
