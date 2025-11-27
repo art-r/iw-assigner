@@ -8,6 +8,12 @@ __pycache__/
 # C extensions
 *.so
 
+# Temporary Excel lock files
+~$*.xlsx
+
+# Excel files
+*.xlsx
+
 # Distribution / packaging
 .Python
 build/

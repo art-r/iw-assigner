@@ -27,6 +27,7 @@ import os
 import sys
 import time
 
+from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
 
 # do a safe import
@@ -45,18 +46,20 @@ except ImportError as exc:
 ###########################################
 # ADJUST THESE PARAMETERS
 # INPUT FILE PATH (absolute or relative path!)
-FILE = "testing/testdata.xlsx"
+FILE = "students_list_no_duplicates.xlsx"
 
-# How many groups to generate
-N_GROUPS = 24
+# Target size of a group (number of students)
+TARGET_GROUP_SIZE = 20
 
 # Output directory (output files will be saved in this dir)
 # absolute or relative path (dir MUST EXIST!)
+# Program also automatically creates a 'master' and 'exchange' subdirectory
+# for the masters and exchange groups inside this 'groups' dir 
 OUTPUT_P = "groups/"
 
-# Prefix of output file.
-# Example: OUT_PREFIX = "M" will result in group files called M01.xlsx, M02.xlsx...
-OUT_PREFIX = "M"
+# Stop the script if required fields are missing (student number or email)
+# Recommended: keep True, fix issues, then rerun.
+MISSING_QUIT = False
 
 # Setting on how to handle duplicates
 # the best is to run this w true for the first time and then fix everything
@@ -69,17 +72,25 @@ DUPLICATE_QUIT = True
 # in the column called "name". If you have a different name for this
 # column then change "name" to the respective name
 CONFIG = {
-    "fname_col": "First Name",
-    "lname_col": "Last Name",
-    "sn_col": "Student number",
-    "email_col": "email",
+    "fname_col": "First name",
+    "lname_col": "Last name",
+    "sn_col": "DTU Student Number (with 's' in front)",
+    "email_col": "E-mail",
     "studyline": "Study programme",
     "gender": "To which Gender do you identify the most?",
     "country": "Home Country",
 }
 
+# Mapping from prefix to which participant categories should be included
+# change this to match the excel file information
+PREFIX_FILTERS = {
+    "M": ["MSc Student - Full Week Option (for students enrolled in a full Master's Programme at DTU)"],
+    "E": ["Exchange Student - Full Week (for students enrolled as guests at DTU for one or two semesters)"],
+}
+
 # How long the script should try to create random groups (in minutes)
 RUNTIME = 0.1  # Minutes
+
 # END OF ADJUSTING
 ###########################################
 
@@ -90,24 +101,16 @@ class Student:
     Taken from the original script
     """
 
-    def __init__(self, index, study, gender, nat):
-        self.index, self.study, self.gender, self.nationality = (
-            index,
+    def __init__(self, row_id, study, gender, nat):
+        self.row_id, self.study, self.gender, self.nationality = (
+            row_id,
             study,
             gender,
             nat,
         )
 
     def __str__(self):
-        return (
-            str(self.index)
-            + ", "
-            + self.study
-            + ", "
-            + self.gender
-            + ", "
-            + self.nationality
-        )
+        return f"{self.row_id}, {self.study}, {self.gender}, {self.nationality}"
 
     def get_orig_data(self, df):
         """
@@ -115,40 +118,144 @@ class Student:
         from the dataset based upon the index
         Handy if there is more data than what is saved here in this class
         """
-        return df.loc[self.index]
+        # Positional access by stable key -> no label/ordering ambiguity
+        return df.iloc[self.row_id]
+
+def check_missing_required(df, config, quit_):
+    """
+    Flag missing/blank values in critical columns: student number and email.
+    Treats NaN, empty strings, and 'n/a'/'na'/'none'/'nan' (any case) as missing.
+    """
+    sn_col = config["sn_col"]
+    em_col = config["email_col"]
+
+    # Normalize locally for robust detection (does not modify df)
+    sn = df[sn_col].astype(str).str.strip()
+    em = df[em_col].astype(str).str.strip().str.lower()
+
+    missing_tokens = {"", "n/a", "na", "none", "nan"}
+
+    sn_missing = sn.isna() | sn.str.lower().isin(missing_tokens)
+    em_missing = em.isna() | em.str.lower().isin(missing_tokens)
+    missing_any = sn_missing | em_missing
+
+    if missing_any.any():
+        if quit_:
+            print("\n")
+            print("#" * 20)
+            print("😬 Well, this is awkward...")
+            print("Some brave souls managed to enroll *without* a student number or email.")
+            print("Truly inspiring. Unfortunately, Excel and I are not that chill.")
+            print("The ")
+            cols_to_show = [
+                config.get("fname_col", None),
+                config.get("lname_col", None),
+                sn_col,
+                em_col,
+            ]
+            cols_to_show = [c for c in cols_to_show if c and c in df.columns]
+            print(df.loc[missing_any, cols_to_show])
+            print("#" * 10)
+            print("\n")
+            print("🛑 I'm stopping here before things get worse.")
+            print("Go fix the missing info, then come back when everyone remembers who they are.")
+            print("Or go and set MISSING_QUIT = FALSE if you are feeling adventurous, but be ready to deal with the consenquences.")
+            print("\n")
+            sys.exit(1)
+        else:
+            print("\n")
+            print("Oh, I see you set MISSING_QUIT = False... someone clearly trusts their Excel more than I do.")
+            print("Fine, I'll keep going. But don't say I didn't warn you.")
+            print("\n")
 
 
-def check_duplicates(data, duplicate_type, quit):
+def check_duplicates(series, duplicate_type, quit_):
     """
-    Helper function to check for duplicates
+    Checks for duplicates within a single column (Series).
+    - Ignores missing-like values such as empty strings, 'N/A', 'None', 'nan'
     """
-    if data.duplicated().sum() > 0:
+    # Normalize to strings and lowercase
+    s = series.astype(str).str.strip().str.lower()
+
+    # Define what counts as "missing" so we don’t treat those as duplicates
+    missing_tokens = {"", "n/a", "na", "none", "nan"}
+    mask = ~s.isin(missing_tokens)
+    s_clean = s[mask]
+
+    # Find duplicates (ignoring missing-like ones)
+    dup_mask = s_clean.duplicated(keep=False)
+
+    if dup_mask.any():
+        print("\n")
         print("#" * 10)
-        print(f"Found duplicates based upon: {duplicate_type}")
-        print("The following rows are flagged as duplicates:\n")
-        print(data[data.duplicated()])
+        print("👯 Ah, duplicates. My favorite kind of identity crisis.")
+        print(f"Found duplicates based on: {duplicate_type}")
+        print("Behold the clones (values shown, missing-like entries ignored):")
+        print(s_clean[dup_mask].sort_values().unique())
         print("#" * 10)
-        if quit:
-            print("Stopping the script")
-            print("Change this behavior by setting DUPLICATE_QUIT to False")
+        if quit_:
+            print("\n")
+            print("🚫 Nope. Not doing this. Go sort your twins out before I continue.")
+            print("Set DUPLICATE_QUIT = False if you enjoy living dangerously.")
+            print("\n")
             sys.exit(0)
+        else:
+            print("\n")
+            print("Oh, I see you set DUPLICATE_QUIT = False... finally, a risk-taker in data cleaning.")
+            print("🤷 Fine, I'll keep going — but don't blame me if one student gets assigned to two groups.")
+            print("\n")
+
+
+
+def calc_num_groups(n_students: int, target_size: int) -> int:
+    """
+    Compute number of groups from target group size.
+    If fractional part > 0.5 -> round up
+    If fractional part < 0.5 -> round down
+    If exactly 0.5 -> round up
+    """
+    if target_size <= 0:
+        raise ValueError("TARGET_GROUP_SIZE must be positive")
+    ratio = n_students / target_size
+    base = int(ratio)  # floor
+    frac = ratio - base
+    if frac > 0.5:
+        groups = base + 1
+    elif frac < 0.5:
+        groups = base
+    else:  # exactly 0.5
+        groups = base + 1
+    return max(groups, 1)
 
 
 def print_stats(category, df, config, n_groups):
     """
     Helper function to print statistics about a category
+    Shows percentages with adaptive precision:
+      - >= 1% -> one decimal (e.g., 3.4%)
+      - <  1% -> two decimals (e.g., 0.44%)
     """
+
+    def fmt_pct(frac):
+        pct = frac * 100.0
+        return f"{pct:.1f}%" if pct >= 1 else f"{pct:.2f}%"
+    
     print(
         f"\n{category} information (type, amount (% of all), ideal avg. amount per group)"
     )
-    count = df[config[category]].value_counts()
-    amount = df.shape[0]
-    n_count = df[config[category]].value_counts(normalize=True)
-    for c in df[config[category]].unique():
-        ideal_avg = round(count[c] / n_groups, 1)
-        # round the ideal avg to 1 if it is below 1
-        ideal_avg = 1 if ideal_avg < 1 else ideal_avg
-        print(f"{c} - {count[c]} ({round(count[c]/amount*100,0)}%) - {ideal_avg}")
+    col = df[config[category]]
+    counts = col.value_counts()
+    amount = len(col)
+
+    for value in counts.index:
+        cnt = counts[value]
+        frac = cnt / amount if amount else 0.0
+        pct_str = fmt_pct(frac)
+        ideal_avg = cnt / n_groups if n_groups else 0.0
+        ideal_avg = round(ideal_avg, 1)
+        if ideal_avg < 1: # round the ideal avg to 1 if it is below 1
+            ideal_avg = 1  
+        print(f"{value} - {cnt} ({pct_str}) - {ideal_avg}")
 
 
 def create_rand_group(students, n_groups):
@@ -268,6 +375,15 @@ def greedy_assign(groups):
                 has_swapped = maybe_swap(group_1, group_2) or has_swapped
         if not has_swapped:
             return groups
+        
+def fun_intro():
+    intros = [
+        "✨ Ah, IntroWeek time again. Let's form some *totally random* but *deeply scientific* groups 🧪.",
+        "🌀 Welcome back, agent of chaos. Let's pretend we're in control of this randomness.",
+        "🎭 Another day, another batch of innocent students about to be grouped against their will.",
+        "🦄 Initializing group generator... because nothing says 'welcome to DTU' like statistical group generation.",
+    ]
+    print("\n" + np.random.choice(intros) + "\n")
 
 
 def progressbar(it, prefix="", size=60, out=sys.stdout):
@@ -296,48 +412,76 @@ def progressbar(it, prefix="", size=60, out=sys.stdout):
         show(i + 1)
     print("\n", flush=True, file=out)
 
+def assert_student_consistency(df, groups, config):
+    for g in groups:
+        for s in g:
+            r = s.get_orig_data(df)
+            assert s.study == r[config["studyline"]]
+            assert s.gender == r[config["gender"]]
+            assert s.nationality == r[config["country"]]
 
-def main(
+
+def run_one_cohort(
     input_file: str,
     output_dir: str,
-    o_prefix: str,
-    n_groups: int,
+    prefix: str,
     dp_quit: bool,
     config: dict,
     runtime: int,
+    prefix_filters: dict,
+    target_group_size: int,
 ):
     """
-    The main function
+    Runs the full pipeline for a single cohort prefix (e.g., 'M' (master) or 'E' (exchange))
+    Returns:
+      - best_group_split
+      - df_used (filtered/processed df WITHOUT _row_id, ready for export)
+      - per_run_group_sizes: groups with the number of students [{'Cohort','Group','Size'}...]
+      - per_run_big_rows: all groups with student names and IDs [{'Cohort','Buddy Group','First name','Last name','Student number'}...]
+      - per_run_studyline_counts: number of students per studyline (only meaningful for 'M'; else empty)
     """
     # validate filepaths and output dir
     if not os.path.isfile(input_file):
-        raise FileNotFoundError(f"Provided path is: '{FILE}'")
+        raise FileNotFoundError(f"Provided path is: '{input_file}'")
 
-    if not os.path.isdir(output_dir):
-        os.makedirs(output_dir)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     # read data
     df = pd.read_excel(input_file, header=0)
 
-    # validate N_GROUPS < amount of students
-    if n_groups > df.shape[0]:
-        raise ValueError(
-            f"Group amount ({n_groups}) is larger student amount ({df.shape[0]})"
-        )
+    # Filter by prefix ('M' or 'E')
+    if prefix in prefix_filters:
+        allowed_categories = prefix_filters[prefix]
+        df = df[df["Participant category"].isin(allowed_categories)].copy()
+        print(f"Filtering for prefix '{prefix}': keeping {len(df)} participants from categories {allowed_categories}")
+    else:
+        print(f"Warning: No filter defined for prefix '{prefix}', using all participants.")
 
-    # fill NA values to be consistent
-    df = df.fillna("N/A")
+    # Compute number of groups from target size
+    n_students = len(df)
+    n_groups = calc_num_groups(n_students, target_group_size)
+    print(f"[{prefix}] Students: {n_students}, target/group ≈ {target_group_size} -> n_groups = {n_groups}")
 
-    # flag potential duplicates
-    # checking for:
-    # 1. exact duplicates
-    # 2. student number duplicates
-    # 3. email duplicates
-    check_duplicates(df, "All student info (exact duplicates)", dp_quit)
+    # Validate
+    if n_groups > n_students:
+        # (This can only happen if target_size is 0/negative, but keep the guard)
+        n_groups = n_students
+
+    # normalize / prep
+    df = df.fillna("N/A").reset_index(drop=True)
+    df[config["sn_col"]] = df[config["sn_col"]].astype(str)
+    df[config["email_col"]] = df[config["email_col"]].astype(str).str.strip().str.lower()
+    df["_row_id"] = np.arange(len(df))
+
+    # missing required fields (fail fast if configured)
+    check_missing_required(df, config, MISSING_QUIT)
+    # duplicates
+    # normalize emails for robust duplicate catch
+    df[config["email_col"]] = df[config["email_col"]].astype(str).str.strip().str.lower()
     check_duplicates(df[config["sn_col"]], "Student number", dp_quit)
     check_duplicates(df[config["email_col"]], "Email", dp_quit)
 
-    # print some stats
+    # stats
     print("#" * 20)
     print("STATS:")
     print_stats("gender", df, config, n_groups)
@@ -345,52 +489,46 @@ def main(
     print_stats("studyline", df, config, n_groups)
     print("#" * 20)
 
-    # convert each row to a student and save all in a list
+    # students
     students = [
-        Student(i, study, gender, nat)
-        for i, (study, gender, nat) in enumerate(
-            zip(df[config["studyline"]], df[config["gender"]], df[config["country"]])
+        Student(
+            int(row["_row_id"]),
+            row[config["studyline"]],
+            row[config["gender"]],
+            row[config["country"]],
         )
+        for _, row in df.iterrows()
     ]
 
-    # do random group assignments for a specified amount of time
-    # while tracking the group w the best diversity score
-    # set the end time
+    # random search
     t_end = time.time() + 60 * runtime
-
-    best_score = -10000000
+    best_score = -10_000_000
     best_group_split = None
     amount_execs = 0
 
-    print(f"Starting the search (running {runtime} min)...")
+    print(f"Starting the search (running {runtime} min) for prefix '{prefix}'...")
     while time.time() < t_end:
-        # For the specified amount of time create random groups in
-        # batches of 50 processes at a time and then evaluate
-        # the number 50 is chosen arbitrarily but shouldnt be too high
-        # to avoid performance issues (especially on slower devices)
         with ProcessPoolExecutor() as ex:
-            processes = [ex.submit(mp_wrapper, students, n_groups) for i in range(50)]
-        # track the amount of executions for more insights
+            processes = [ex.submit(mp_wrapper, students, n_groups) for _ in range(50)]
         amount_execs += 50
-
         for p in processes:
             result = p.result()
-            # check if the result was better than the best score
-            # if so then save the score and the group split
             if result[0] > best_score:
                 best_score = result[0]
                 best_group_split = result[1]
 
-    tried = round(amount_execs / stirling_second_kind(df.shape[0], n_groups), 10)
+    tried_fraction = amount_execs / stirling_second_kind(df.shape[0], n_groups)
     print(f"Finished. Tried {amount_execs} combinations")
-    print(f"(This is equal to around {tried}% of all possible combinations)")
+    if tried_fraction < 1e-6:
+        print(f"(This is equal to around {tried_fraction*100:.6e}% of all possible combinations)")
+    else:
+        print(f"(This is equal to around {tried_fraction*100:.6f}% of all possible combinations)")
     print("#" * 20)
     print(f"==> Best diversity score is: {best_score} (the closer to 0 the better)")
     print("#" * 20)
+
+    # greedy improve (you can cap this if needed)
     print("Running greedy swapping search to try to improve")
-    # now take the group w the best diversity score and apply greedy algorithm
-    # to try to swap around students until the diversity score
-    # try 100 different swaps
     groups = best_group_split
     for _ in progressbar(range(100)):
         groups = greedy_assign(groups)
@@ -402,36 +540,121 @@ def main(
     print("#" * 20)
     print(f"==> Best diversity score is now: {best_score} (the closer to 0 the better)")
     print("#" * 20)
-    # the overview
-    # pd.DataFrame(
-    #     best_group_split, index=[f"{o_prefix}{i}" for i in range(1, n_groups + 1)]
-    # ).to_excel(out_path)
 
-    # save also per group (one folder per group)
-    # folder (should contain all info)
-    all_data = pd.DataFrame(columns=["Buddy Group", config["fname_col"], config["lname_col"], config["sn_col"]])
+    # integrity check
+    assert_student_consistency(df, best_group_split, config)
+
+    # drop _row_id so it doesn't leak into outputs
+    df = df.drop(columns=["_row_id"])
+
+    # write per-group files into subdir (master/exchange)
+    subdir = "master" if prefix == "M" else "exchange"
+    per_group_root = Path(output_dir) / subdir
+    per_group_root.mkdir(parents=True, exist_ok=True)
+
+    # collect per-run summaries
+    per_run_group_sizes = []
+    per_run_big_rows = []
+
     for i, g in enumerate(best_group_split):
-        dir_path = os.path.join(output_dir, f"{o_prefix}{i+1}")
-        if not os.path.isdir(dir_path):
-            os.makedirs(dir_path)
-        values = []
-        for student in g:
-            values.append(student.get_orig_data(df).values)
+        group_name = f"{prefix}{i+1:02d}"
+        dir_path = per_group_root / group_name
+        dir_path.mkdir(parents=True, exist_ok=True)
+
+        values = [s.get_orig_data(df).values for s in g]
         groupdf = pd.DataFrame(values, columns=df.columns)
-        # drop the original index
-        groupdf = groupdf.drop("Unnamed: 0", axis=1, errors="ignore")
-        groupdf.reset_index(drop=True, inplace=True)
-        out_path = os.path.join(dir_path, f"{o_prefix}{i+1}.xlsx")
-        groupdf.to_excel(out_path)
-        # add to the overall dataframe
-        groupdf["Buddy Group"] = f"{o_prefix}{i+1}"
-        all_data = pd.concat([all_data, groupdf[["Buddy Group", config["fname_col"], config["lname_col"], config["sn_col"], config["gender"], config["studyline"], config["country"]]]])
-        all_data.reset_index(drop=True, inplace=True)
-    
-# write the result
-    out_path = os.path.join(output_dir, f"{o_prefix}_all_groups.xlsx")
-    all_data.to_excel(out_path)
+
+        # Drop any residual index-like column
+        groupdf = groupdf.drop("Unnamed: 0", axis=1, errors="ignore").reset_index(drop=True)
+
+        # For Exchange groups, delete studyline column from per-group file
+        if prefix == "E":
+            cols_to_keep = [
+                config["fname_col"], config["lname_col"], config["sn_col"],
+                config["country"], config["email_col"],
+            ]
+            groupdf_to_save = groupdf[cols_to_keep]
+        else:  # MSc
+            cols_to_keep = [
+                config["fname_col"], config["lname_col"], config["sn_col"],
+                config["country"], config["email_col"], config["studyline"],
+            ]
+            groupdf_to_save = groupdf[cols_to_keep]
+
+        out_path = dir_path / f"{group_name}.xlsx"
+        groupdf_to_save.to_excel(out_path, index=False)
+
+        # group size summary row
+        per_run_group_sizes.append({"Cohort": prefix, "Group": group_name, "Size": len(groupdf)})
+
+        # big list rows (name + student number, plus cohort & group)
+        for _, row in groupdf.iterrows():
+            per_run_big_rows.append({
+                "Cohort": prefix,
+                "Buddy Group": group_name,
+                config["fname_col"]: row[config["fname_col"]],
+                config["lname_col"]: row[config["lname_col"]],
+                config["sn_col"]: row[config["sn_col"]],
+            })
+
+    # studyline counts (only for MSc)
+    if prefix == "M":
+        study_counts = df[config["studyline"]].value_counts().rename_axis("Study line").reset_index(name="Count")
+    else:
+        study_counts = pd.DataFrame(columns=["Study line", "Count"])
+
+    return best_group_split, df, per_run_group_sizes, per_run_big_rows, study_counts
+
+
+def main(
+    input_file: str,
+    output_dir: str,
+    dp_quit: bool,
+    config: dict,
+    runtime: int,
+):
+    """
+    Orchestrates runs for BOTH cohorts: 'M' then 'E'.
+    Writes:
+      - per-group files in groups/master/ and groups/exchange/
+      - groups/group_sizes.xlsx          (M+E)
+      - groups/studyline_counts_M.xlsx   (M only)
+      - groups/all_groups_big.xlsx       (M+E)
+    """
+    fun_intro()
+
+    # run MSc
+    m_res = run_one_cohort(
+        input_file, output_dir, "M", dp_quit, config, runtime, PREFIX_FILTERS, TARGET_GROUP_SIZE
+    )
+    # run Exchange
+    e_res = run_one_cohort(
+        input_file, output_dir, "E", dp_quit, config, runtime, PREFIX_FILTERS, TARGET_GROUP_SIZE
+    )
+
+    # combine summaries
+    _, _, m_group_sizes, m_big_rows, m_study_counts = m_res
+    _, _, e_group_sizes, e_big_rows, e_study_counts = e_res  # e_study_counts is empty by design
+
+    # 1) group sizes (M+E)
+    group_sizes_df = pd.DataFrame(m_group_sizes + e_group_sizes)
+    group_sizes_path = Path(output_dir) / "group_sizes.xlsx"
+    group_sizes_df.to_excel(group_sizes_path, index=False)
+
+    # 2) study line counts (only M)
+    study_counts_path = Path(output_dir) / "studyline_counts_M.xlsx"
+    m_study_counts.to_excel(study_counts_path, index=False)
+
+    # 3) big list (M+E)
+    big_df = pd.DataFrame(m_big_rows + e_big_rows)
+    big_path = Path(output_dir) / "all_groups_big.xlsx"
+    big_df.to_excel(big_path, index=False)
+
+    print(f"\nSaved summaries:\n - {group_sizes_path}\n - {study_counts_path}\n - {big_path}")
+    print("\n🎉 Groups created, spreadsheets saved, and chaos (mostly) contained.")
+    print("Go forth and confuse a new generation of students responsibly. 💪")
+
 
 
 if __name__ == "__main__":
-    main(FILE, OUTPUT_P, OUT_PREFIX, N_GROUPS, DUPLICATE_QUIT, CONFIG, RUNTIME)
+    main(FILE, OUTPUT_P, DUPLICATE_QUIT, CONFIG, RUNTIME)
